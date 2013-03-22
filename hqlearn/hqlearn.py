@@ -130,6 +130,48 @@ class HRL(kabuki.Hierarchical):
 
         return knodes
 
+    def create_family_beta(self, name, value=.5, g_value=.5, g_mean=.5, g_certainty=2,
+                           var_alpha=1, var_beta=1, var_value=.1):
+        """Similar to create_family_normal() but beta for the subject
+        and group mean nodes. This is useful when the parameter space
+        is restricted from [0, 1].
+
+        See create_family_normal() help for more information.
+
+        """
+
+        knodes = OrderedDict()
+        if self.is_group_model and name not in self.group_only_nodes:
+            g_mean = Knode(pm.Beta, name, alpha=g_mean*g_certainty, beta=(1-g_mean)*g_certainty,
+                      value=g_value, depends=self.depends[name])
+
+            g_certainty = Knode(pm.Gamma, '%s_certainty' % name,
+                                alpha=var_alpha, beta=var_beta, value=var_value)
+
+            alpha = Knode(pm.Deterministic, '%s_alpha' % name, eval=lambda mean, certainty: mean*certainty,
+                      mean=g_mean, certainty=g_certainty, plot=False, trace=False, hidden=True)
+
+            beta = Knode(pm.Deterministic, '%s_beta' % name, eval=lambda mean, certainty: (1-mean)*certainty,
+                      mean=g_mean, certainty=g_certainty, plot=False, trace=False, hidden=True)
+
+            subj = Knode(pm.Beta, '%s_subj'%name, alpha=alpha, beta=beta,
+                         value=value, depends=('subj_idx',),
+                         subj=True, plot=False)
+
+            knodes['%s'%name]            = g_mean
+            knodes['%s_certainty'%name]  = g_certainty
+            knodes['%s_alpha'%name]      = alpha
+            knodes['%s_beta'%name]       = beta
+            knodes['%s_bottom'%name]     = subj
+
+        else:
+            g = Knode(pm.Beta, name, alpha=g_mean*g_certainty, beta=(1-g_mean)*g_certainty, value=value,
+                      depends=self.depends[name])
+
+            knodes['%s_bottom'%name] = g
+
+        return knodes
+
 
 def check_params_valid(**params):
     lrate = params.get('lrate', .1)
