@@ -1,10 +1,13 @@
 from numpy import *
 import numpy as np
+from collections import OrderedDict
+
 import pandas as pd
 import pymc as pm
 
 import kabuki
 from kabuki.utils import stochastic_from_dist
+from kabuki.hierarchical import Knode
 
 rand = random.random
 
@@ -56,27 +59,22 @@ def RL_likelihood(data, lrate, invtemp):
     '''Given data (first column is stim, second is action, third is reward)
     lrate and inverse temperature, produces the likelihood of the data given model and params'''
 
-    data = data.reset_index()
-
     # initialize problem
     V = .5*ones((2,2))
-    # get number of trials
-    size = len(data)
 
-    likelihood = 0
+    logp = 0
 
-    for t in range(size):
+    for t in data.index:
         s = data['state'][t]
         a = data['action'][t]
+        reward = data['reward'][t]
+
         # get proba and add it to the log likelihood
         proba = softmax_proba(invtemp*V[s], a)
-        likelihood = likelihood + math.log(proba)
-
-        reward = data['reward'][t]
+        logp += np.log(proba)
         V[s,a] = V[s,a] + lrate * (reward - V[s,a])
 
-    # this is actually a log likelihood
-    return likelihood
+    return logp
 
 RL_like = stochastic_from_dist(name="QLearn likelihood",
                                logp=RL_likelihood,
@@ -84,22 +82,54 @@ RL_like = stochastic_from_dist(name="QLearn likelihood",
 
 class HRL(kabuki.Hierarchical):
     def create_knodes(self):
-      # Create family of 4 knodes, mu, sigma, subj and transform
-      # returns a dictionary mapping the name, appended with a key
-      # like _var, _subj or _bottom to the corresponding Knode object.
-      # Of specific interest is the _bottom knode as that's what we'll
-      # put into the likelihood
-      invtemp = self.create_family_gamma('invtemp', value=1)
       # value contains the starting value for the group parameter
-      lrate = self.create_family_invlogit('lrate', value=0.5) # will automatically convert .5 to logit
+      invtemp = self.create_family_trunc_normal('invtemp', value=5, lower=0)
+      lrate = self.create_family_beta('lrate', value=0.5, g_certainty=2)
 
       # likelihood
       like = kabuki.Knode(RL_like, 'RL_like', lrate=lrate['lrate_bottom'],
                           invtemp=invtemp['invtemp_bottom'],
                           col_name=['state', 'action', 'reward'],
                           observed=True)
+
       # return all knodes as a list
       return invtemp.values() + lrate.values() + [like]
+
+    def create_family_trunc_normal(self, name, value=0, lower=None,
+                                   upper=None, g_mu=0, g_sigma=10, std_std=2,
+                                   var_value=.1):
+        """Similar to create_family_normal() but creates a Uniform
+        group distribution and a truncated subject distribution.
+
+        See create_family_normal() help for more information.
+
+        """
+        knodes = OrderedDict()
+
+        if self.is_group_model and name not in self.group_only_nodes:
+            g = Knode(pm.TruncatedNormal, '%s' % name, a=lower,
+                      b=upper, mu=g_mu, tau=g_sigma**-2, value=value, depends=self.depends[name])
+            var = Knode(pm.HalfNormal, '%s_var' % name, tau=std_std**-2, value=var_value)
+            tau = Knode(pm.Deterministic, '%s_tau' % name,
+                        doc='%s_tau' % name, eval=lambda x: x**-2, x=var,
+                        plot=False, trace=False, hidden=True)
+            subj = Knode(pm.TruncatedNormal, '%s_subj' % name, mu=g,
+                         tau=tau, a=lower, b=upper, value=value,
+                         depends=('subj_idx',), subj=True, plot=self.plot_subjs)
+
+            knodes['%s'%name] = g
+            knodes['%s_var'%name] = var
+            knodes['%s_tau'%name] = tau
+            knodes['%s_bottom'%name] = subj
+
+        else:
+            subj = Knode(pm.Uniform, name, lower=lower,
+                         upper=upper, value=value,
+                         depends=self.depends[name])
+            knodes['%s_bottom'%name] = subj
+
+        return knodes
+
 
 def check_params_valid(**params):
     lrate = params.get('lrate', .1)

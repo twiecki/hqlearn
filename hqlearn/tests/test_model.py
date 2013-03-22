@@ -4,7 +4,7 @@ import hqlearn
 
 class TestModel(unittest.TestCase):
     def setUp(self):
-        self.true_params = {'lrate': .1, 'invtemp': 10}
+        self.true_params = {'lrate': .1, 'invtemp': 5}
 
     def test_model_no_group_breakdown(self):
         data, _ = hqlearn.gen_data(self.true_params, subjs=1)
