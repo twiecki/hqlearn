@@ -40,7 +40,8 @@ def RL_generate(lrate, invtemp, num_states=2, reward_probs=None, size=500):
         data[t, 2] = reward
 
         # Actual RL eqution
-        V[s,a] = V[s,a] + lrate * (reward - V[s,a])
+        V[s,a] += lrate * (reward - V[s,a])
+
 
     df = pd.DataFrame(data, columns=['state', 'action', 'reward'])
 
@@ -58,11 +59,11 @@ def RL_likelihood(data, lrate, invtemp):
     V = 1./actions * np.ones((states, actions))
 
     logp = 0
-    for s, a, reward in data.iterrows():
+    for t, (s, a, reward) in data[['state', 'action', 'reward']].iterrows():
         # get proba and add it to the log likelihood
         proba = softmax_proba(V[s,:], a, invtemp)
         logp += np.log(proba)
-        V[s, a] = V[s, a] + lrate * (reward - V[s, a])
+        V[s, a] += lrate * (reward - V[s, a])
 
     return logp
 
